@@ -221,6 +221,54 @@ if (!([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]:
     break
 }
 
+function Test-FlowAccessCode {
+    param([Security.SecureString]$Code)
+    if ($null -eq $Code) { return $false }
+    $pointer = [IntPtr]::Zero
+    $bytes = $null
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+        $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Code)
+        $plain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer)
+        $bytes = [Text.Encoding]::UTF8.GetBytes('ce5f67f644b34976406e38f7f55c12da:' + $plain)
+        $digest = [BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-', '').ToLowerInvariant()
+        return $digest -ceq '1e293c391fac8eccab9a0d776646eb7a53fe068ac813535bdbb136878e3756fe'
+    } finally {
+        $plain = $null
+        if ($bytes) { [Array]::Clear($bytes, 0, $bytes.Length) }
+        if ($pointer -ne [IntPtr]::Zero) { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer) }
+        $sha.Dispose()
+    }
+}
+
+function Read-FlowAccessCode {
+    Write-Host 'FLOW | Enter your access code to continue.' -ForegroundColor Magenta
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        $code = $null
+        try {
+            $code = Read-Host -Prompt 'Access code / رمز الدخول' -AsSecureString -ErrorAction Stop
+            if (Test-FlowAccessCode -Code $code) { return $true }
+            Write-Host "Incorrect code ($attempt/3)." -ForegroundColor Red
+        } catch {
+            Write-Host 'Access cancelled or input unavailable.' -ForegroundColor Red
+            return $false
+        } finally {
+            if ($code) { $code.Dispose() }
+        }
+    }
+    return $false
+}
+
+# This local gate deters casual access; a modified client can remove it.
+# It runs after elevation, before logging, runspaces, presets or the GUI.
+if (-not (Read-FlowAccessCode)) {
+    Write-Host 'FLOW access denied.' -ForegroundColor Red
+    $global:LASTEXITCODE = 1
+    if ($script:WinUtilIsFileProcess) { exit 1 }
+    return 1
+}
+
+
 # Variable to sync between runspaces
 $sync = [Hashtable]::Synchronized(@{})
 $sync.version = "26.10.10"
